@@ -31,48 +31,57 @@ export default class TransactionScenario {
         contract.on(eventName, callback)
     }
 
-    registerAllEvents() {
-
-        this.registerEvent(this.messenger.bsc, 'TextMessageSent', (sender, messageId) => {
-            console.log('TextMessageSent event received on Messenger BSC !')
-            console.log('SENDER:', sender)
-            console.log('MESSAGE ID:', messageId)
+    registerAllEvents(
+        from: 'eth' | 'bsc' = 'bsc',
+        to: 'eth' | 'bsc' = 'eth'
+    ) {
+        // Business logic event on Messenger contract
+        this.registerEvent(this.messenger[from], 'TextMessageSent', (sender, messageId) => {
+            console.log(`TextMessageSent event received from Messenger on ${from.toUpperCase()} !`)
+            console.log('Sender:', sender)
+            console.log('Text message ID:', messageId)
         })
 
-        this.registerEvent(this.callService.bsc, 'CallMessageSent', (fromBsc, toBsc, snBsc) => {
-            console.log('CallMessageSent event received on CallService BSC !')
-            if (fromBsc === this.messenger.bsc.address) {
-                console.log('SN match !', snBsc)
-            }
+        // Lifecycle events on CallService contract
+        this.registerEvent(this.callService[from], 'CallMessageSent', (fromOrigin, toOrigin, snOrigin) => {
+            console.log(`CallMessageSent event received from CallService on ${from.toUpperCase()} !`)
 
-            this.registerEvent(this.callService.eth, 'CallMessage', async (fromEth, toEth, snEth, reqid) => {
-                this.registerEvent(this.messenger.eth, 'TextMessageReceived', async (from, messageId) => {
-                    console.log('TextMessageReceived event received on Messenger ETH !')
-                    console.log('FROM:', from)
-                    console.log('MESSAGE ID:', messageId)
+            if (fromOrigin === this.messenger[from].address) {
+                console.log('X-Call tx SN:', snOrigin)
 
-                    const destMessage = await this.messenger.eth.receivedMessages(messageId)
+                this.registerEvent(this.callService[to], 'CallMessage', async (fromDest, toDest, snDest, reqid) => {
+                    // Check the content of the data on the destination chain (Messenger contract)
+                    this.registerEvent(this.messenger[to], 'TextMessageReceived', async (from, messageId) => {
+                        const destMessage = await this.messenger[to].receivedMessages(messageId)
 
-                    console.log('DEST MESSAGE:', destMessage)
+                        console.log(`TextMessageReceived event received from Messenger on ${to.toUpperCase()} !`)
+                        console.log('From:', from)
+                        console.log('Text message ID:', messageId)
+                        console.log('Received message:', destMessage)
+                    })
+    
+                    console.log(`CallMessage event received from CallService on ${to.toUpperCase()} !`)
+    
+                    if (snDest.eq(snOrigin)) {
+                        console.log('X-Call tx sn match with the origin !')
+                        console.log('Request ID:', reqid)
+    
+                        await this.executeCall('eth', reqid)
+                    }
                 })
-
-                console.log('CallMessage event received on CallService ETH !')
-
-                if (snEth.eq(snBsc)) {
-                    console.log('NSN match !')
-                    console.log('REQID:', reqid)
-
-                    await this.executeCall('eth', reqid)
-                }
-            })
+            }
         })
     }
 
     async executeCall(network: 'eth' | 'bsc', reqId: ethers.BigNumber) {
-        const execute = await this.callService[network].executeCall(reqId)
-        await execute.wait()
-
-        console.log('Call executed !')
+        try {
+            const execute = await this.callService[network].executeCall(reqId)
+            await execute.wait()
+    
+            console.log('executeCall success !')
+        } catch (err) {
+            console.error('executeCall error:', err)
+        }
     }
 
     async run() {
@@ -99,11 +108,11 @@ export default class TransactionScenario {
 
             console.log('Gas price:', utils.formatEther(gasPrice))
             console.log('Gas limit:', gasLimit.toString())
-            console.log('Total cost:', utils.formatEther(gasPrice.mul(gasLimit)))
+            console.log('Total cost:', utils.formatEther(gasPrice.mul(gasLimit).add(sendMessageFee)))
 
             const sendMessageTx = await this.messenger.bsc.sendMessage(
                 messengerBTPAddress,
-                'Hello world !!',
+                'Hello world !!', // replace with your message (only string)
                 { value: sendMessageFee, gasLimit, gasPrice }
             )
 
